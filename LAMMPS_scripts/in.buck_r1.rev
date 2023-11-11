@@ -1,0 +1,216 @@
+# 3d Buck_potential
+
+units		metal
+atom_style full
+
+variable    T equal 50
+variable    kB equal 1.3806504e-23  
+variable    V equal vol
+variable    dt equal 0.001 #in ps
+variable    p equal 1000     #correlation length
+variable    s equal 10     #sample interval
+variable    d equal $p/200*$s   #dump interval
+
+variable    ev2J equal 1.60218e-19
+variable    A2m equal 1.0e-10
+variable    ps2s equal 1.0e-12
+variable    convert equal ${ev2J}*${ev2J}/${ps2s}/${A2m}
+
+boundary	p p p
+
+#read_data in.buck_old.rut
+#read_data input_disorderedPyrite.buck.rut
+read_data in.buck_modified_image_pair_5_46.rut
+#read_data input_modified_disorderedPyrite.buck.rut
+
+mass	1 23.00
+mass 	2 16.00
+mass 	3 0.0000001
+#mass 	4 0.0000001	
+
+pair_style	buck/coul/long 5
+bond_style harmonic
+angle_style harmonic
+
+pair_coeff   1 1 423.4132	0.316957211	1.0436
+pair_coeff   2 2 3367	0.23923445	11.2406
+pair_coeff   1 2 1193.99	0.272702482	3.42916
+
+pair_coeff   3 3 0.0000001	999.99	0.0000001
+pair_coeff   1 3 0.0000001	999.99	0.0000001
+pair_coeff   2 3 0.0000001	999.99	0.0000001
+
+bond_coeff 1 999.0 0.65  #(999.9 = fake number since not used)
+angle_coeff 1 999.0 180  #(999.9 = fake number since not used)
+
+kspace_style  ewald 1.0e-4 #used default damping parameter
+
+timestep	${dt}
+neigh_modify every 1 delay 1 check yes
+thermo	${d}
+
+velocity	all create $T 1111 mom yes rot yes
+
+group sodium type 1 
+group onlyOxygen type 2
+group onlyMassless type 3
+group oxygen type 2 3
+group clump id <> 1 1024
+
+compute cc2 all chunk/atom molecule
+compute PE2  all pe/atom pair
+compute KE2  all ke/atom
+fix PE2 all ave/chunk 100 1 100 cc2 c_PE2 file pe2_chunk_modifiy.dat ave one
+fix KE2 all ave/chunk 100 1 100 cc2 c_KE2 file ke2_chunk_modify.dat ave one
+
+compute myKE2 all ke/atom
+compute myPE2 all pe/atom
+compute KEtot all reduce sum c_myKE2
+compute PEtot all reduce sum c_myPE2
+
+#Method for NVT
+fix NVT1 clump rigid/nvt molecule temp $T $T $(100*dt)
+fix 2 all ave/time 100 1 100 c_thermo_temp c_thermo_press c_KEtot c_PEtot file temp_dump_onlyNVT_1.profile
+
+compute_modify thermo_temp extra/dof 520
+compute Temp_tot all temp
+compute_modify Temp_tot extra/dof 520
+compute T_sodium sodium temp
+compute_modify T_sodium extra/dof 515 #(512+3)
+compute T_oxygen oxygen temp
+compute_modify T_oxygen extra/dof 5
+
+#compute OxyAngle all angle/local theta
+#compute angle1 all property/local aatom1 aatom2 aatom3
+
+#compute OxyBond all bond/local dist
+#compute dist1 all property/local batom1 batom2
+
+thermo_style custom step etotal press pe ke temp c_Temp_tot c_T_sodium c_T_oxygen
+dump traj all atom 1000 dump_atom_NVT_1.xyz
+#dump 1 all custom 10 Atoms_NaO2_NVT_1.dump id mol type x y z xu yu zu
+#dump 2 all local 100 dist_NVT_1.dump c_dist1[*] c_OxyBond
+#dump 3 all local 100 angle_NVT.dump c_angle1[*] c_OxyAngle
+
+run          100000
+reset_timestep 0
+#undump 1
+#undump 2
+#undump 3
+undump traj
+unfix NVT1
+unfix 2
+unfix PE2
+unfix KE2
+
+fix NVE1 clump rigid/nve molecule
+compute_modify thermo_temp extra/dof 520
+thermo_style custom step etotal press pe ke temp
+run 100000
+reset_timestep 0
+unfix NVE1
+
+compute cc1 all chunk/atom molecule
+compute PE  all pe/atom pair
+compute KE  all ke/atom
+fix PE all ave/chunk 100 1 100 cc1 c_PE file pe_chunk_modifiy_2.dat ave one
+fix KE all ave/chunk 100 1 100 cc1 c_KE file ke_chunk_modify_2.dat ave one
+
+#Method for NVE 
+fix NVE1 clump rigid/nve molecule
+
+#Method for NVT
+#fix 1 clump rigid/nvt molecule temp 300 300 $(100*dt)
+
+#Method for NPT
+#fix 1 clump rigid/npt molecule temp 300.0 300.0 $(100*dt) iso 0.0 0.0 $(1000*dt)
+
+#compute comp1 clump pair/local dist
+#compute minDist all reduce max c_2
+#fix MinCall all vector 10 c_minDist
+#variable diff equal max(f_MinCall)
+#compute Press all pressure thermo_temp
+#compute OxyAngle all angle/local theta
+#compute OxyBond oxygen bond/local dist
+#compute NaBond sodium bond/local dist
+compute myKE1 all ke/atom
+compute myPE1 all pe/atom
+compute KEtot1 all reduce sum c_myKE1
+compute PEtot1 all reduce sum c_myPE1
+fix 3 all ave/time 100 1 100 c_thermo_temp c_thermo_press c_KEtot1 c_PEtot1 file temp_dump_onlyNVE_1.profile
+
+#compute OxyAngle_NVE all angle/local theta
+#compute angle1_NVE all property/local aatom1 aatom2 aatom3
+
+#compute OxyBond_NVE all bond/local dist
+#compute dist1_NVE all property/local batom1 batom2
+
+compute velacf all vacf
+fix myvacf_all all ave/time 100 1 100 c_velacf[1] c_velacf[2] c_velacf[3] c_velacf[4] file vacf_all.dat ave running 
+
+compute velacfNa sodium vacf
+fix myvacfNa all ave/time 100 1 100 c_velacfNa[1] c_velacfNa[2] c_velacfNa[3] c_velacfNa[4] file vacf_na.dat ave running 
+
+compute velacfOxy onlyOxygen vacf
+fix myvacfOxygen all ave/time 100 1 100 c_velacfOxy[1] c_velacfOxy[2] c_velacfOxy[3] c_velacfOxy[4] file vacf_oxygen.dat ave running 
+
+compute velacfMassless onlyMassless vacf
+fix myvacfMassless all ave/time 100 1 100 c_velacfMassless[1] c_velacfMassless[2] c_velacfMassless[3] c_velacfMassless[4] file vacf_massless.dat ave running 
+
+compute TransRigidKE_tot all ke/rigid NVE1
+compute TransRigidKE_oxygen oxygen ke/rigid NVE1
+compute TransRigidKE_sodium sodium ke/rigid NVE1
+
+compute RotKE_Tot all erotate/rigid NVE1
+compute RotKE_sodium sodium erotate/rigid NVE1
+compute RotKE_oxygen oxygen erotate/rigid NVE1
+
+compute_modify thermo_temp extra/dof 520 
+compute Temp_tot_NVE all temp
+compute_modify Temp_tot_NVE extra/dof 520
+compute T_sodium_NVE sodium temp
+compute_modify T_sodium_NVE extra/dof 515 #(512+3)
+compute T_oxygen_NVE oxygen temp
+compute_modify T_oxygen_NVE extra/dof 5
+
+#fix 5 all vector ${d} c_thermo_temp
+
+compute      myKE all ke/atom
+compute      myPE all pe/atom
+compute      myStress all stress/atom NULL virial
+compute      flux all heat/flux myKE myPE myStress
+variable     Jx equal c_flux[1]/vol
+variable     Jy equal c_flux[2]/vol
+variable     Jz equal c_flux[3]/vol
+fix          JJ all ave/correlate $s $p $d & 
+              c_flux[1] c_flux[2] c_flux[3] type auto file $T.rigid.dat ave running
+variable     scale equal ${convert}/${kB}/$T/$T/$V*$s*${dt}
+variable     k11 equal trap(f_JJ[3])*${scale}
+variable     k22 equal trap(f_JJ[4])*${scale}
+variable     k33 equal trap(f_JJ[5])*${scale}
+
+#thermo_style custom step etotal c_thermo_press pe ke c_TransRigidKE_tot c_TransRigidKE_oxygen c_TransRigidKE_sodium c_RotKE_Tot c_RotKE_sodium c_RotKE_oxygen temp c_Temp_tot c_T_sodium c_T_oxygen
+thermo_style custom step etotal press pe ke c_TransRigidKE_tot c_RotKE_Tot temp c_Temp_tot_NVE c_T_sodium_NVE c_T_oxygen_NVE v_Jx v_Jy v_Jz v_k11 v_k22 v_k33
+
+dump trajNVE all atom 1000 dump_atom_NVE_1.xyz
+dump 4 all custom 100 Atoms_NaO2_NVE_1.dump id mol type x y z xu yu zu 
+dump_modify 4 sort id
+dump 5 all custom 100 Velocity_NaO2_NVE_1.dump id mol type vx vy vz
+dump_modify 5 sort id 
+#dump 5 all local 100 dist_NVE.dump c_dist1_NVE[*] c_OxyBond_NVE
+#dump 6 all local 100 angle_NVE.dump c_angle1_NVE[*] c_OxyAngle_NVE
+
+#dump_modify 4 sort id 
+#dump 1 all local 10 dist.dump index c_1[1] c_1[2] c_2 
+#dump 1 all local 100 angle.dump c_OxyAngle[*] 
+#dump 2 all local 100 dist.dump c_OxyBond[*]
+#dump 3 all local 100 dist_na.dump c_NaBond[*]
+#dump 1 oxygen custom 100 Atoms.dump id mol type x y z xu yu zu ix iy iz 
+
+run 1000000
+
+variable Lx equal vol^(1/3)/4
+variable     k equal (v_k11+v_k22+v_k33)/3.0
+variable     ndens equal count(all)/vol 
+variable Press_tot equal ave(f_5)
+print        "average conductivity: $k[W/mK] @ $T K, ${Lx} Angs"
